@@ -45,6 +45,7 @@ class PersonSelectionConfig:
 class MattingConfig:
     """Human matting settings."""
     model: str = "rvm"
+    device: str = "auto"  # "cuda", "cpu", or "auto" (auto-detect)
     downsample_ratio: float = 0.25
     filter_incomplete: bool = True
     min_person_height_ratio: float = 0.3
@@ -147,6 +148,7 @@ class Config:
             },
             'matting': {
                 'model': config.matting.model,
+                'device': config.matting.device,
                 'downsample_ratio': config.matting.downsample_ratio,
                 'filter_incomplete': config.matting.filter_incomplete,
                 'min_person_height_ratio': config.matting.min_person_height_ratio

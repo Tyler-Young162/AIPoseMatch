@@ -37,8 +37,13 @@ class MattingNetwork(nn.Module):
             self.backbone = mobilenet_v3_large(pretrained=True).features
             self.backbone_range = [4, 10, 15]
         elif variant == 'resnet50':
-            self.backbone = resnet50(pretrained=True)
+            # Load ResNet50 and remove classifier to get feature maps
+            resnet = resnet50(pretrained=True)
+            # Remove avgpool and fc layers, keep only feature extraction
+            self.backbone = nn.Sequential(*list(resnet.children())[:-2])  # Remove avgpool and fc
             self.backbone_range = None
+            # ResNet50 feature map has 2048 channels
+            resnet_channels = 2048
         else:
             raise ValueError(f"Unknown variant: {variant}")
         
@@ -51,20 +56,45 @@ class MattingNetwork(nn.Module):
                     for i in self.backbone_range
                 }
             )
+            decoder_input_channels = 960  # MobileNetV3 final features
         else:
             self.feature_extractor = None
+            decoder_input_channels = resnet_channels
         
         # RVM specific layers (simplified)
         # In real implementation, these would be ConvGRU and other layers
         # For now, we use a simplified decoder
         
-        # Simplified decoder
+        # IMPORTANT: This decoder is a SIMPLIFIED implementation
+        # The official RVM uses a much more complex architecture with:
+        # - ConvGRU for temporal consistency
+        # - Multiple refinement stages
+        # - Different layer names and structures
+        # 
+        # Our simplified decoder will NOT match the checkpoint keys,
+        # so weights won't load properly. This is why RVM output is uniform.
+        #
+        # To fix this, we need to either:
+        # 1. Use the official RVM implementation
+        # 2. Train our own model with this architecture
+        # 3. Manually map checkpoint keys (complex)
+        
+        # Simplified decoder (won't match official weights)
         self.decoder = nn.Sequential(
-            nn.Conv2d(960, 128, 3, padding=1),  # Adjust input channels based on variant
-            nn.ReLU(),
+            # First stage: reduce channels significantly
+            nn.Conv2d(decoder_input_channels, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            # Second stage
+            nn.Conv2d(256, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            # Third stage
             nn.Conv2d(128, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 2, 3, padding=1),  # Alpha + foreground
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            # Final stage: output alpha + foreground
+            nn.Conv2d(64, 2, 3, padding=1),
             nn.Sigmoid()
         )
     
@@ -108,17 +138,20 @@ class MattingNetwork(nn.Module):
     
     def _forward_resnet50(self, src):
         """Forward pass for ResNet50 variant."""
-        # Simplified implementation
+        # Extract feature maps (not classification output)
+        # backbone now returns feature maps of shape [B, 2048, H', W']
         feat = self.backbone(src)
         
-        # Decode (needs proper implementation)
+        # Decode feature maps to alpha matte
         output = self.decoder(feat)
         
+        # Upsample to original input size
         if output.shape[2:] != src.shape[2:]:
             output = torch.nn.functional.interpolate(
                 output, size=src.shape[2:], mode='bilinear', align_corners=False
             )
         
+        # Split alpha and foreground
         alpha = output[:, 0:1]
         fgr = output[:, 1:2].repeat(1, 3, 1, 1) * src
         
@@ -159,13 +192,72 @@ def load_rvm_model(model_path: str, variant='mobilenetv3', device='cuda'):
             state_dict = checkpoint
         
         # Load weights (strict=False to handle missing keys)
-        model.load_state_dict(state_dict, strict=False)
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        
+        # Check if most weights were loaded
+        total_keys = len(state_dict.keys())
+        loaded_keys = total_keys - len(missing_keys)
+        load_ratio = loaded_keys / total_keys if total_keys > 0 else 0
+        
+        # Detailed analysis of checkpoint structure
+        print(f"\n{'='*70}")
+        print(f"[RVM DEBUG] Model Weight Loading Analysis")
+        print(f"{'='*70}")
+        print(f"Total keys in checkpoint: {total_keys}")
+        print(f"Successfully loaded: {loaded_keys}")
+        print(f"Missing keys: {len(missing_keys)}")
+        print(f"Unexpected keys: {len(unexpected_keys)}")
+        print(f"Match ratio: {load_ratio*100:.1f}%")
+        
+        # Analyze checkpoint key patterns
+        checkpoint_keys = list(state_dict.keys())
+        key_patterns = {}
+        for key in checkpoint_keys[:20]:  # Analyze first 20 keys
+            parts = key.split('.')
+            if len(parts) > 0:
+                prefix = parts[0]
+                key_patterns[prefix] = key_patterns.get(prefix, 0) + 1
+        
+        print(f"\n[RVM DEBUG] Checkpoint key patterns (first 20):")
+        for prefix, count in sorted(key_patterns.items()):
+            example_key = next((k for k in checkpoint_keys if k.startswith(prefix)), "")
+            print(f"  {prefix}* : {count} keys (e.g., {example_key[:50]})")
+        
+        # Show all missing keys (not just examples)
+        if missing_keys:
+            print(f"\n[RVM DEBUG] All missing keys ({len(missing_keys)}):")
+            missing_list = list(missing_keys)
+            for i, key in enumerate(missing_list[:20]):  # Show first 20
+                print(f"  {i+1}. {key}")
+            if len(missing_list) > 20:
+                print(f"  ... and {len(missing_list) - 20} more")
+        
+        # Show unexpected keys (keys in model but not in checkpoint)
+        if unexpected_keys:
+            print(f"\n[RVM DEBUG] Unexpected keys ({len(unexpected_keys)}):")
+            unexpected_list = list(unexpected_keys)
+            for i, key in enumerate(unexpected_list[:10]):  # Show first 10
+                print(f"  {i+1}. {key}")
+            if len(unexpected_list) > 10:
+                print(f"  ... and {len(unexpected_list) - 10} more")
+        
+        print(f"{'='*70}\n")
         
         # Move to device
         model = model.to(device)
         model.eval()
         
-        print(f"✓ RVM model loaded from {model_path}")
+        if load_ratio < 0.5:  # Less than 50% of weights loaded
+            print(f"⚠ WARNING: Only {loaded_keys}/{total_keys} weights loaded ({load_ratio*100:.1f}%)")
+            print(f"   This means the model architecture doesn't match the checkpoint!")
+            print(f"   The decoder layers are using RANDOM initialization, which explains")
+            print(f"   why the output is nearly uniform (no useful matting).")
+            print(f"\n   SOLUTIONS:")
+            print(f"   1. Use the official RVM implementation from GitHub")
+            print(f"   2. Or use simplified matting (which is working)")
+        else:
+            print(f"✓ RVM model loaded from {model_path} ({load_ratio*100:.1f}% weights matched)")
+        
         return model
         
     except Exception as e:

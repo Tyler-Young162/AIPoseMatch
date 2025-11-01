@@ -250,6 +250,9 @@ class Visualizer:
         matting_frame = None
         if matting_result is not None:
             matting_frame = matting_result
+        elif alpha_matte is not None:
+            # If no composited result, show alpha matte as BGR (grayscale visualization)
+            matting_frame = cv2.cvtColor(alpha_matte, cv2.COLOR_GRAY2BGR)
         elif roi_frame is not None:
             matting_frame = roi_frame
         

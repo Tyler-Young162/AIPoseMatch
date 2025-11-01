@@ -22,8 +22,9 @@ person_selection:
 
 matting:
   model: "rvm"
+  device: "cuda"  # Options: "cuda" (force GPU), "cpu" (force CPU), "auto" (auto-detect)
   downsample_ratio: 0.25
-  filter_incomplete: true
+  filter_incomplete: false  # Temporarily disabled to debug RVM output
   min_person_height_ratio: 0.3
 
 display:

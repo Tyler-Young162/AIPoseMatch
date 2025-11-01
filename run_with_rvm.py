@@ -88,15 +88,24 @@ class AIPoseMatchRVMDebug:
         self.visualizer = Visualizer(self.config)
         print("[OK] 可视化模块初始化成功")
         
-        # Debug mode flags
-        self.debug_flags = {
-            'show_camera_full': False,      # 1 - 显示完整摄像头画面
-            'show_roi': True,               # 2 - 显示裁剪后的ROI
-            'show_pose_debug': False,       # 3 - 显示骨骼检测调试信息
-            'show_matting_debug': False,    # 4 - 显示抠像调试信息
-            'show_all': False,              # 5 - 显示所有调试信息
+        # Display mode flags - 默认234都开启
+        self.display_flags = {
+            'show_roi_crop': True,          # 2 - 显示裁剪区域（无效区域黑色）
+            'show_skeleton': True,          # 3 - 显示骨骼信息
+            'show_matting': True,           # 4 - 显示抠像效果
             'show_fps': True,               # F - 切换FPS显示
             'show_hints': True,             # H - 切换提示信息显示
+        }
+        
+        # Legacy debug flags (for compatibility)
+        self.debug_flags = {
+            'show_camera_full': False,
+            'show_roi': True,
+            'show_pose_debug': True,
+            'show_matting_debug': True,
+            'show_all': False,
+            'show_fps': True,
+            'show_hints': True,
         }
         
         # Camera switching
@@ -122,11 +131,12 @@ class AIPoseMatchRVMDebug:
         print("\n" + "=" * 70)
         print("键盘控制说明")
         print("=" * 70)
-        print("数字键:")
-        print("1          - 切换显示完整摄像头画面")
-        print("2          - 切换显示裁剪后的ROI区域")
-        print("3          - 切换骨骼检测调试信息")
-        print("4          - 切换抠像模块调试信息")
+        print("显示模式（合并窗口）:")
+        print("2          - 切换ROI裁剪显示（无效区域黑色）")
+        print("3          - 切换骨骼信息显示")
+        print("4          - 切换抠像效果显示（绿色背景）")
+        print("其他控制:")
+        print("1          - 切换显示完整摄像头画面（调试用）")
         print("5          - 切换所有调试信息（开/关）")
         print("C / c      - 切换摄像头")
         print("F / f      - 切换FPS显示")
@@ -135,7 +145,8 @@ class AIPoseMatchRVMDebug:
         print("R / r      - 重置统计信息")
         print("Q / q      - 退出程序")
         print("=" * 70)
-        print("\n提示：按数字键查看不同模式，按'C'切换摄像头，按'Q'退出")
+        print("\n默认模式：ROI裁剪 + 骨骼 + 抠像（234都开启）")
+        print("提示：按2/3/4键切换各功能显示，按'Q'退出")
         print("=" * 70 + "\n")
     
     def _get_debug_display(self, key: str):
@@ -378,8 +389,8 @@ class AIPoseMatchRVMDebug:
                 best_person = self.person_selector.select_best_person(all_persons, roi_center)
                 result['best_person'] = best_person
                 
-                # Pose visualization
-                if self.debug_flags['show_pose_debug'] or self.debug_flags['show_all']:
+                # Always prepare pose frame for potential display
+                if best_person:
                     roi_with_pose = self.pose_detector.draw_skeleton(roi_frame.copy(), [best_person])
                     result['pose_frame'] = roi_with_pose
                 
@@ -387,7 +398,12 @@ class AIPoseMatchRVMDebug:
                 if best_person:
                     matting_start = time.time()
                     bbox = best_person.get('bounding_box')
-                    alpha_matte, matting_result = self.matting.process(roi_frame, bbox)
+                    landmarks = best_person.get('landmarks')
+                    
+                    # Store person data for matting module to access
+                    self.matting._last_person_data = best_person
+                    
+                    alpha_matte, matting_result = self.matting.process(roi_frame, bbox, None, landmarks)
                     matting_time = time.time() - matting_start
                     
                     result['alpha'] = alpha_matte
@@ -402,57 +418,153 @@ class AIPoseMatchRVMDebug:
         return result
     
     def create_display(self, original_frame: np.ndarray, processed_data: dict) -> np.ndarray:
-        """Create display based on debug flags."""
-        displays = []
+        """
+        创建合并的单一显示窗口
+        根据2、3、4的开关状态组合显示效果
         
-        # Mode 1: Full camera view
-        if self.debug_flags['show_camera_full'] or self.debug_flags['show_all']:
-            disp = original_frame.copy()
-            disp = self._draw_status_overlay(disp, "完整摄像头画面")
-            displays.append(("完整摄像头画面", disp))
+        默认：ROI裁剪(2) + 骨骼(3) + 抠像(4) 都开启
+        - 模式2开启：显示ROI区域，无效区域为黑色
+        - 模式3开启：叠加骨骼信息
+        - 模式4开启：应用抠像效果（绿色背景）
+        """
+        h, w = original_frame.shape[:2]
         
-        # Mode 2: ROI region
-        if self.debug_flags['show_roi'] or self.debug_flags['show_all']:
-            roi = processed_data.get('roi')
-            if roi is not None:
-                disp = roi.copy()
-                disp = self._draw_status_overlay(disp, "ROI区域")
-                displays.append(("ROI区域", disp))
+        roi_frame = processed_data.get('roi')
+        best_person = processed_data.get('best_person')
+        alpha_matte = processed_data.get('alpha')
+        matting_result = processed_data.get('matting_result')
         
-        # Mode 3: Pose detection
-        if self.debug_flags['show_pose_debug'] or self.debug_flags['show_all']:
-            pose_frame = processed_data.get('pose_frame')
-            if pose_frame is not None:
-                disp = pose_frame.copy()
-                disp = self._draw_status_overlay(disp, "骨骼检测")
-                displays.append(("骨骼检测", disp))
+        # 计算ROI在原图中的位置
+        roi_config = self.config.roi
+        x_min = int(roi_config.x_min * w)
+        x_max = int(roi_config.x_max * w)
+        y_min = int(roi_config.y_min * h)
+        y_max = int(roi_config.y_max * h)
         
-        # Mode 4: Matting
-        if self.debug_flags['show_matting_debug'] or self.debug_flags['show_all']:
-            matting_result = processed_data.get('matting_result')
-            if matting_result is not None:
-                disp = matting_result.copy()
-                disp = self._draw_status_overlay(disp, "抠像结果")
-                displays.append(("抠像结果", disp))
+        # 确定基础显示内容
+        if self.display_flags['show_roi_crop'] and roi_frame is not None:
+            # 模式2开启：显示ROI区域，无效区域为黑色
+            display = np.zeros((h, w, 3), dtype=np.uint8)
+            
+            # 调整ROI大小以匹配实际位置
+            target_h = y_max - y_min
+            target_w = x_max - x_min
+            
+            if roi_frame.shape[:2] != (target_h, target_w):
+                roi_resized = cv2.resize(roi_frame, (target_w, target_h))
+            else:
+                roi_resized = roi_frame.copy()
+            
+            # 放置ROI到对应位置
+            display[y_min:y_max, x_min:x_max] = roi_resized
+            
+            # 当前工作区域是ROI区域
+            working_area = display[y_min:y_max, x_min:x_max].copy()
+            working_h, working_w = working_area.shape[:2]
+        else:
+            # 模式2关闭：显示完整原始画面
+            display = original_frame.copy()
+            working_area = display.copy()
+            working_h, working_w = h, w
+            # 注意：x_min, y_min, x_max, y_max 仍保留用于坐标转换
         
-        if not displays:
-            # Default: show everything in grid
-            combined = self.visualizer.visualize_complete(
-                original_frame,
-                processed_data.get('roi'),
-                processed_data.get('best_person'),
-                processed_data.get('alpha'),
-                processed_data.get('matting_result'),
-                len(processed_data.get('persons', []))
-            )
-            combined = self._draw_status_overlay(combined, "AI Pose Match")
-            return combined
+        # 应用抠像效果（模式4）
+        if self.display_flags['show_matting'] and matting_result is not None:
+            # matting_result已经是合成后的结果（人物原色+绿色背景）
+            # 它基于ROI frame，所以需要调整大小以匹配ROI区域
+            target_roi_h = y_max - y_min
+            target_roi_w = x_max - x_min
+            
+            if matting_result.shape[:2] != (target_roi_h, target_roi_w):
+                matting_resized = cv2.resize(matting_result, (target_roi_w, target_roi_h))
+            else:
+                matting_resized = matting_result.copy()
+            
+            if self.display_flags['show_roi_crop']:
+                # ROI模式下，直接替换ROI区域
+                display[y_min:y_max, x_min:x_max] = matting_resized
+            else:
+                # 完整画面模式下，将抠像效果叠加到ROI区域
+                # 创建alpha mask用于混合
+                if alpha_matte is not None:
+                    # 使用alpha matte进行混合
+                    alpha_resized = cv2.resize(alpha_matte, (target_roi_w, target_roi_h))
+                    if alpha_resized.ndim == 2:
+                        alpha_3ch = np.expand_dims(alpha_resized, axis=2)
+                        alpha_3ch = np.repeat(alpha_3ch, 3, axis=2) / 255.0
+                    else:
+                        alpha_3ch = alpha_resized / 255.0
+                    
+                    # 混合：原图 * (1-alpha) + 抠像 * alpha
+                    roi_original = display[y_min:y_max, x_min:x_max].astype(np.float32)
+                    matting_float = matting_resized.astype(np.float32)
+                    blended = (roi_original * (1 - alpha_3ch) + matting_float * alpha_3ch).astype(np.uint8)
+                    display[y_min:y_max, x_min:x_max] = blended
+                else:
+                    # 没有alpha，直接替换
+                    display[y_min:y_max, x_min:x_max] = matting_resized
         
-        # Show individual displays
-        for title, disp in displays:
-            cv2.imshow(title, disp)
+        # 叠加骨骼信息（模式3）
+        if self.display_flags['show_skeleton'] and best_person is not None:
+            if self.display_flags['show_roi_crop']:
+                # ROI模式下，在ROI区域内绘制骨骼（landmarks已经是相对于ROI的）
+                roi_section = display[y_min:y_max, x_min:x_max].copy()
+                roi_with_skeleton = self.pose_detector.draw_skeleton(roi_section, [best_person])
+                display[y_min:y_max, x_min:x_max] = roi_with_skeleton
+            else:
+                # 完整画面模式：需要将landmarks从ROI坐标系转换到完整画面坐标系
+                # landmarks是归一化的，相对于ROI frame（0-1相对于ROI）
+                # 需要转换为相对于完整画面的归一化坐标
+                roi_w_ratio = (x_max - x_min) / w
+                roi_h_ratio = (y_max - y_min) / h
+                
+                # 创建转换后的person数据
+                converted_person = best_person.copy()
+                converted_landmarks = best_person['landmarks'].copy()
+                
+                # 转换每个landmark的坐标：从ROI归一化坐标 -> 完整画面归一化坐标
+                for i in range(len(converted_landmarks)):
+                    # 原坐标是相对于ROI的（0-1）
+                    roi_x = converted_landmarks[i][0]
+                    roi_y = converted_landmarks[i][1]
+                    
+                    # 转换为完整画面的归一化坐标
+                    full_x = (x_min / w) + (roi_x * roi_w_ratio)
+                    full_y = (y_min / h) + (roi_y * roi_h_ratio)
+                    
+                    converted_landmarks[i][0] = full_x
+                    converted_landmarks[i][1] = full_y
+                
+                converted_person['landmarks'] = converted_landmarks
+                
+                # 在完整画面上绘制骨骼
+                display = self.pose_detector.draw_skeleton(display, [converted_person])
         
-        return None
+        # 添加状态信息
+        fps = self.visualizer.calculate_fps()
+        if fps > 0 and self.display_flags['show_fps']:
+            display = self.visualizer.draw_fps(display, fps)
+        
+        display = self.visualizer.draw_status_info(
+            display,
+            best_person,
+            len(processed_data.get('persons', []))
+        )
+        
+        # 添加模式指示（左下角）
+        mode_text = []
+        if self.display_flags['show_roi_crop']:
+            mode_text.append("ROI")
+        if self.display_flags['show_skeleton']:
+            mode_text.append("骨骼")
+        if self.display_flags['show_matting']:
+            mode_text.append("抠像")
+        
+        mode_str = " | ".join(mode_text) if mode_text else "无"
+        cv2.putText(display, f"模式: {mode_str}", (10, h - 20),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        return display
     
     def run(self):
         """Main application loop."""
@@ -469,10 +581,9 @@ class AIPoseMatchRVMDebug:
                 # Process frame
                 processed_data = self.process_frame(frame)
                 
-                # Create display
+                # Create merged display (always returns a valid display)
                 combined_display = self.create_display(frame, processed_data)
-                if combined_display is not None:
-                    cv2.imshow("AI Pose Match - RVM增强版", combined_display)
+                cv2.imshow("AI Pose Match - RVM增强版", combined_display)
                 
                 # Update stats
                 self._update_stats()
@@ -491,16 +602,19 @@ class AIPoseMatchRVMDebug:
                     print(f"完整摄像头画面: {'开启' if self.debug_flags['show_camera_full'] else '关闭'}")
                 
                 elif key == ord('2'):
-                    self.debug_flags['show_roi'] = not self.debug_flags['show_roi']
-                    print(f"ROI区域显示: {'开启' if self.debug_flags['show_roi'] else '关闭'}")
+                    self.display_flags['show_roi_crop'] = not self.display_flags['show_roi_crop']
+                    self.debug_flags['show_roi'] = self.display_flags['show_roi_crop']
+                    print(f"ROI裁剪显示 (2): {'开启' if self.display_flags['show_roi_crop'] else '关闭'}")
                 
                 elif key == ord('3'):
-                    self.debug_flags['show_pose_debug'] = not self.debug_flags['show_pose_debug']
-                    print(f"骨骼检测调试: {'开启' if self.debug_flags['show_pose_debug'] else '关闭'}")
+                    self.display_flags['show_skeleton'] = not self.display_flags['show_skeleton']
+                    self.debug_flags['show_pose_debug'] = self.display_flags['show_skeleton']
+                    print(f"骨骼显示 (3): {'开启' if self.display_flags['show_skeleton'] else '关闭'}")
                 
                 elif key == ord('4'):
-                    self.debug_flags['show_matting_debug'] = not self.debug_flags['show_matting_debug']
-                    print(f"抠像模块调试: {'开启' if self.debug_flags['show_matting_debug'] else '关闭'}")
+                    self.display_flags['show_matting'] = not self.display_flags['show_matting']
+                    self.debug_flags['show_matting_debug'] = self.display_flags['show_matting']
+                    print(f"抠像效果 (4): {'开启' if self.display_flags['show_matting'] else '关闭'}")
                 
                 elif key == ord('5'):
                     self.debug_flags['show_all'] = not self.debug_flags['show_all']
