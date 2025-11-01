@@ -1,0 +1,35 @@
+camera:
+  device_id: 1
+  resolution: [1280, 720]
+  fps: 30
+
+roi:
+  x_min: 0.4
+  x_max: 0.6
+  y_min: 0.0
+  y_max: 0.8
+
+pose:
+  model: "mediapipe"
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+
+person_selection:
+  completeness_weight: 0.4
+  height_weight: 0.3
+  centeredness_weight: 0.3
+  min_keypoints_visible: 8
+
+matting:
+  model: "rvm"
+  downsample_ratio: 0.25
+  filter_incomplete: true
+  min_person_height_ratio: 0.3
+
+display:
+  window_width: 1920
+  window_height: 1080
+  show_roi: true
+  show_skeleton: true
+  show_matting: true
+
