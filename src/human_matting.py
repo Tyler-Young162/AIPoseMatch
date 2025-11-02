@@ -36,6 +36,9 @@ class HumanMatting:
     GPU-accelerated human matting using RVM or similar.
     """
     
+    # 调试开关：控制是否显示详细的每帧处理信息（默认关闭，避免信息刷屏）
+    VERBOSE_DEBUG = False  # 设置为True时显示详细的每帧debug信息
+    
     def __init__(self, config: Config):
         """
         Initialize human matting module.
@@ -53,10 +56,10 @@ class HumanMatting:
             # Force CUDA - check if available
             if torch.cuda.is_available():
                 self.device = torch.device("cuda")
-                print(f"✓ 使用CUDA模式: {torch.cuda.get_device_name(0)}")
+                print(f"[OK] 使用CUDA模式: {torch.cuda.get_device_name(0)}")
             else:
                 print("=" * 70)
-                print("⚠ 错误: 配置要求使用CUDA，但CUDA不可用！")
+                print("[WARN] 错误: 配置要求使用CUDA，但CUDA不可用！")
                 print("=" * 70)
                 print("\n当前PyTorch版本:", torch.__version__)
                 print("检测到您安装的是CPU版本的PyTorch。")
@@ -81,7 +84,7 @@ class HumanMatting:
             # Auto-detect: use CUDA if available, otherwise CPU
             if torch.cuda.is_available():
                 self.device = torch.device("cuda")
-                print(f"✓ 自动检测: 使用CUDA模式 ({torch.cuda.get_device_name(0)})")
+                print(f"[OK] 自动检测: 使用CUDA模式 ({torch.cuda.get_device_name(0)})")
             else:
                 self.device = torch.device("cpu")
                 print(f"使用CPU模式（自动检测，CUDA不可用）")
@@ -132,7 +135,8 @@ class HumanMatting:
                             if official_model is not None:
                                 self.model = official_model
                                 self.model_type = "rvm_official"
-                                print(f"[DEBUG INIT] ✓ Official RVM loaded successfully!")
+                                # if HumanMatting.VERBOSE_DEBUG:
+                                #     print(f"[DEBUG INIT] OK: Official RVM loaded successfully!")
                                 self.is_initialized = True
                                 print(f"[DEBUG INIT] Initialization complete, model_type: {self.model_type}")
                                 print(f"{'='*60}\n")
@@ -166,10 +170,11 @@ class HumanMatting:
                             if self.model is not None:
                                 model_loaded = True
                                 self.model_type = "rvm_real"
-                                print(f"[DEBUG INIT] ✓ Model loaded successfully, type: {self.model_type}")
+                                # if HumanMatting.VERBOSE_DEBUG:
+                                #     print(f"[DEBUG INIT] OK: Model loaded successfully, type: {self.model_type}")
                                 break
                             else:
-                                print(f"[DEBUG INIT] ✗ Model loading failed from {model_path}")
+                                print(f"[DEBUG INIT] ERROR: Model loading failed from {model_path}")
                     
                     if not model_loaded:
                         print("[DEBUG INIT] RVM model file not found. Please download it using:")
@@ -369,18 +374,23 @@ class HumanMatting:
             Alpha matte (grayscale, 0-255) with white=foreground, black=background
         """
         if not self.is_initialized:
-            print("[DEBUG MATTING] Model not initialized, initializing...")
+            # 详细debug信息（已注释，需要时取消注释）
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG MATTING] Model not initialized, initializing...")
             if not self.initialize():
-                print("[DEBUG MATTING] Initialization failed!")
+                print("[ERROR] Matting initialization failed!")
                 return None
-            print(f"[DEBUG MATTING] Model initialized, type: {self.model_type}")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG MATTING] Model initialized, type: {self.model_type}")
         
         if frame is None:
-            print("[DEBUG MATTING] Input frame is None!")
+            print("[ERROR] Input frame is None!")
             return None
         
-        print(f"[DEBUG MATTING] Extracting matte, frame shape: {frame.shape}, bbox: {bbox}")
-        print(f"[DEBUG MATTING] Model type: {self.model_type}, RVM_AVAILABLE: {RVM_AVAILABLE}")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG MATTING] Extracting matte, frame shape: {frame.shape}, bbox: {bbox}")
+        #     print(f"[DEBUG MATTING] Model type: {self.model_type}, RVM_AVAILABLE: {RVM_AVAILABLE}")
         
         # Get landmarks if not provided but available from stored data
         if landmarks is None and hasattr(self, '_last_person_data'):
@@ -388,43 +398,55 @@ class HumanMatting:
             if person_data and 'landmarks' in person_data:
                 landmarks = person_data['landmarks']
         
-        print(f"[DEBUG MATTING] Using landmarks: {landmarks is not None}")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG MATTING] Using landmarks: {landmarks is not None}")
         
         # Use appropriate matting method
         if self.model_type == "rvm_official" and OFFICIAL_RVM_AVAILABLE:
-            print("[DEBUG MATTING] Using OFFICIAL RVM model")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print("[DEBUG MATTING] Using OFFICIAL RVM model")
             alpha_matte = self._extract_official_rvm_matte(frame)
         elif self.model_type == "rvm_real" and RVM_AVAILABLE:
-            print("[DEBUG MATTING] Using simplified RVM model")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print("[DEBUG MATTING] Using simplified RVM model")
             alpha_matte = self._extract_rvm_matte(frame)
             
             # Auto-fallback check: if RVM output has no variation, use simple matting
             if alpha_matte is not None:
                 alpha_range = alpha_matte.max() - alpha_matte.min()
                 if alpha_range < 10:  # Less than 10 levels of difference in 0-255 range
-                    print(f"[DEBUG MATTING] ⚠ Simplified RVM output has insufficient variation (range={alpha_range:.1f})")
-                    print(f"[DEBUG MATTING] Auto-falling back to simple matting")
+                    print(f"[WARN] Simplified RVM output has insufficient variation (range={alpha_range:.1f}), falling back to simple matting")
+                    # if HumanMatting.VERBOSE_DEBUG:
+                    #     print(f"[DEBUG MATTING] Auto-falling back to simple matting")
                     alpha_matte = self.simple_matting(frame, bbox, landmarks)
-                    if alpha_matte is not None:
-                        print(f"[DEBUG MATTING] Simple matting range: [{alpha_matte.min()}, {alpha_matte.max()}]")
+                    # if HumanMatting.VERBOSE_DEBUG:
+                    #     if alpha_matte is not None:
+                    #         print(f"[DEBUG MATTING] Simple matting range: [{alpha_matte.min()}, {alpha_matte.max()}]")
         else:
-            print(f"[DEBUG MATTING] Using simple matting (model_type={self.model_type})")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG MATTING] Using simple matting (model_type={self.model_type})")
             alpha_matte = self.simple_matting(frame, bbox, landmarks)
         
         if alpha_matte is None:
-            print("[DEBUG MATTING] Alpha matte is None after extraction!")
-        else:
-            print(f"[DEBUG MATTING] Alpha matte extracted, shape: {alpha_matte.shape}, dtype: {alpha_matte.dtype}")
-            print(f"[DEBUG MATTING] Alpha matte range: [{alpha_matte.min()}, {alpha_matte.max()}], mean: {alpha_matte.mean():.1f}")
+            print("[ERROR] Alpha matte is None after extraction!")
+            return None
+        
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG MATTING] Alpha matte extracted, shape: {alpha_matte.shape}, dtype: {alpha_matte.dtype}")
+        #     print(f"[DEBUG MATTING] Alpha matte range: [{alpha_matte.min()}, {alpha_matte.max()}], mean: {alpha_matte.mean():.1f}")
         
         # Apply filtering if enabled
         if self.matting_config.filter_incomplete and alpha_matte is not None:
             old_shape = alpha_matte.shape
             alpha_matte = self.filter_incomplete_figures(alpha_matte, bbox)
             if alpha_matte is not None:
-                print(f"[DEBUG MATTING] After filtering, shape: {alpha_matte.shape}, range: [{alpha_matte.min()}, {alpha_matte.max()}]")
+                # if HumanMatting.VERBOSE_DEBUG:
+                #     print(f"[DEBUG MATTING] After filtering, shape: {alpha_matte.shape}, range: [{alpha_matte.min()}, {alpha_matte.max()}]")
+                pass
             else:
-                print(f"[DEBUG MATTING] Filtering removed all content (was shape {old_shape})")
+                print(f"[WARN] Filtering removed all content (was shape {old_shape})")
         
         return alpha_matte
     
@@ -493,7 +515,7 @@ class HumanMatting:
             # Check if alpha is all zeros or all ones (indicates model issue)
             alpha_range = alpha_np.max() - alpha_np.min()
             if alpha_range < 0.01:
-                print(f"[DEBUG RVM] ⚠ WARNING: Alpha matte has no variation! (range < 0.01)")
+                print(f"[DEBUG RVM] WARN: Alpha matte has no variation! (range < 0.01)")
                 print(f"[DEBUG RVM] This suggests the model is not working correctly.")
                 print(f"[DEBUG RVM] Possible causes:")
                 print(f"[DEBUG RVM]   1. Model weights don't match architecture (check initialization)")
@@ -501,7 +523,7 @@ class HumanMatting:
                 print(f"[DEBUG RVM]   3. Decoder architecture too simple")
                 print(f"[DEBUG RVM] Consider using simplified matting or fixing model architecture.")
             elif alpha_range < 0.1:
-                print(f"[DEBUG RVM] ⚠ WARNING: Alpha matte has very low variation! (range={alpha_range:.4f})")
+                print(f"[DEBUG RVM] WARN: Alpha matte has very low variation! (range={alpha_range:.4f})")
                 print(f"[DEBUG RVM] Model output may not be useful for matting.")
             
             # Clip and convert to 0-255
@@ -533,18 +555,23 @@ class HumanMatting:
             Alpha matte (grayscale, 0-255)
         """
         try:
-            print("[DEBUG OFFICIAL RVM] Starting official RVM matte extraction...")
+            # 详细debug信息（已注释，需要时取消注释）
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print("[DEBUG OFFICIAL RVM] Starting official RVM matte extraction...")
             
             if self.model is None:
-                print("[DEBUG OFFICIAL RVM] ERROR: Model is None!")
+                print("[ERROR] Official RVM: Model is None!")
                 return None
             
-            print(f"[DEBUG OFFICIAL RVM] Model device: {next(self.model.parameters()).device}")
-            print(f"[DEBUG OFFICIAL RVM] Input frame shape: {frame.shape}")
+            # 详细debug信息（已注释，需要时取消注释）
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG OFFICIAL RVM] Model device: {next(self.model.parameters()).device}")
+            #     print(f"[DEBUG OFFICIAL RVM] Input frame shape: {frame.shape}")
             
             # Convert to tensor using official converter
             tensor = convert_to_rgb_tensor_official(frame, self.device)
-            print(f"[DEBUG OFFICIAL RVM] Tensor shape: {tensor.shape}, device: {tensor.device}")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG OFFICIAL RVM] Tensor shape: {tensor.shape}, device: {tensor.device}")
             
             original_size = frame.shape[:2]
             downsample = self.matting_config.downsample_ratio
@@ -553,7 +580,8 @@ class HumanMatting:
             # Official RVM handles downsampling internally via downsample_ratio parameter
             # forward(src, r1=None, r2=None, r3=None, r4=None, downsample_ratio=1, segmentation_pass=False)
             # Returns: [fgr, pha, r1, r2, r3, r4] where pha is alpha
-            print(f"[DEBUG OFFICIAL RVM] Running official RVM inference (downsample_ratio={downsample})...")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG OFFICIAL RVM] Running official RVM inference (downsample_ratio={downsample})...")
             with torch.no_grad():
                 # Use recursive states from previous frame if available (for temporal consistency)
                 r1 = getattr(self, '_last_r1', None)
@@ -575,16 +603,20 @@ class HumanMatting:
                 # For now, we'll ignore them since we process frames independently
                 self._last_r1, self._last_r2, self._last_r3, self._last_r4 = r1, r2, r3, r4
             
-            print(f"[DEBUG OFFICIAL RVM] Model output - alpha shape: {alpha.shape if hasattr(alpha, 'shape') else 'N/A'}")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG OFFICIAL RVM] Model output - alpha shape: {alpha.shape if hasattr(alpha, 'shape') else 'N/A'}")
             
             # Alpha from official RVM is already in correct shape [1, 1, H, W] with values [0, 1]
-            print(f"[DEBUG OFFICIAL RVM] Alpha shape: {alpha.shape}")
-            print(f"[DEBUG OFFICIAL RVM] Alpha range: [{alpha.min().item():.4f}, {alpha.max().item():.4f}], mean: {alpha.mean().item():.4f}")
+            # 详细debug信息（已注释，需要时取消注释）
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG OFFICIAL RVM] Alpha shape: {alpha.shape}")
+            #     print(f"[DEBUG OFFICIAL RVM] Alpha range: [{alpha.min().item():.4f}, {alpha.max().item():.4f}], mean: {alpha.mean().item():.4f}")
             
             # Official RVM handles downsampling internally, so alpha should match input size
             # But let's check and resize if needed
             if alpha.shape[2:] != original_size:
-                print(f"[DEBUG OFFICIAL RVM] Resizing alpha from {alpha.shape[2:]} to {original_size}")
+                # if HumanMatting.VERBOSE_DEBUG:
+                #     print(f"[DEBUG OFFICIAL RVM] Resizing alpha from {alpha.shape[2:]} to {original_size}")
                 alpha = torch.nn.functional.interpolate(
                     alpha, size=original_size, mode='bilinear', align_corners=False
                 )
@@ -592,15 +624,18 @@ class HumanMatting:
             # Convert to numpy alpha matte
             alpha_matte = convert_tensor_to_alpha(alpha)
             
-            print(f"[DEBUG OFFICIAL RVM] Final alpha matte - shape: {alpha_matte.shape}, "
-                  f"range: [{alpha_matte.min()}, {alpha_matte.max()}], mean: {alpha_matte.mean():.1f}")
+            # 详细debug信息（已注释，需要时取消注释）
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG OFFICIAL RVM] Final alpha matte - shape: {alpha_matte.shape}, "
+            #           f"range: [{alpha_matte.min()}, {alpha_matte.max()}], mean: {alpha_matte.mean():.1f}")
             
             # Check quality
             alpha_range = alpha_matte.max() - alpha_matte.min()
             if alpha_range < 10:
-                print(f"[DEBUG OFFICIAL RVM] ⚠ WARNING: Alpha matte has low variation (range={alpha_range:.1f})")
-            else:
-                print(f"[DEBUG OFFICIAL RVM] ✓ Alpha matte looks good (range={alpha_range:.1f})")
+                print(f"[WARN] Official RVM: Alpha matte has low variation (range={alpha_range:.1f})")
+            # else:
+            #     if HumanMatting.VERBOSE_DEBUG:
+            #         print(f"[DEBUG OFFICIAL RVM] ✓ Alpha matte looks good (range={alpha_range:.1f})")
             
             return alpha_matte
             
@@ -626,22 +661,27 @@ class HumanMatting:
         Returns:
             Composited result
         """
-        print(f"[DEBUG COMPOSITE] Starting composite, frame shape: {frame.shape if frame is not None else None}")
-        print(f"[DEBUG COMPOSITE] Alpha matte shape: {alpha_matte.shape if alpha_matte is not None else None}")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG COMPOSITE] Starting composite, frame shape: {frame.shape if frame is not None else None}")
+        #     print(f"[DEBUG COMPOSITE] Alpha matte shape: {alpha_matte.shape if alpha_matte is not None else None}")
         
         if frame is None or alpha_matte is None:
-            print("[DEBUG COMPOSITE] ERROR: frame or alpha_matte is None, returning frame")
+            print("[ERROR] Composite: frame or alpha_matte is None, returning frame")
             return frame
         
         # Check size match
         if frame.shape[:2] != alpha_matte.shape[:2]:
-            print(f"[DEBUG COMPOSITE] WARNING: Size mismatch! frame: {frame.shape[:2]}, alpha: {alpha_matte.shape[:2]}")
-            print("[DEBUG COMPOSITE] Resizing alpha matte to match frame...")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print(f"[DEBUG COMPOSITE] WARNING: Size mismatch! frame: {frame.shape[:2]}, alpha: {alpha_matte.shape[:2]}")
+            #     print("[DEBUG COMPOSITE] Resizing alpha matte to match frame...")
             alpha_matte = cv2.resize(alpha_matte, (frame.shape[1], frame.shape[0]))
         
         # Normalize alpha to 0-1
         alpha = alpha_matte.astype(np.float32) / 255.0
-        print(f"[DEBUG COMPOSITE] Alpha normalized range: [{alpha.min():.3f}, {alpha.max():.3f}], mean: {alpha.mean():.3f}")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG COMPOSITE] Alpha normalized range: [{alpha.min():.3f}, {alpha.max():.3f}], mean: {alpha.mean():.3f}")
         
         # Add alpha channel if needed
         if frame.ndim == 2:
@@ -652,29 +692,37 @@ class HumanMatting:
             # Green background for better contrast
             background = np.zeros_like(frame)
             background[:, :, 1] = 255  # Green channel = 255 (bright green)
-            print("[DEBUG COMPOSITE] Using green background")
-        else:
-            print(f"[DEBUG COMPOSITE] Using provided background, shape: {background.shape}")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print("[DEBUG COMPOSITE] Using green background")
+        # else:
+        #     if HumanMatting.VERBOSE_DEBUG:
+        #         print(f"[DEBUG COMPOSITE] Using provided background, shape: {background.shape}")
         
         # Expand alpha to 3 channels
         alpha = np.expand_dims(alpha, axis=2)
         alpha = np.repeat(alpha, 3, axis=2)
-        print(f"[DEBUG COMPOSITE] Alpha expanded shape: {alpha.shape}")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG COMPOSITE] Alpha expanded shape: {alpha.shape}")
         
         # Apply style
         if style.lower() == "silhouette":
             # 剪影风格：人物区域为纯黑色
             foreground = np.zeros_like(frame)  # 纯黑色
-            print("[DEBUG COMPOSITE] Using silhouette style (black foreground)")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print("[DEBUG COMPOSITE] Using silhouette style (black foreground)")
         else:
             # 原图风格：人物保持原色
             foreground = frame
-            print("[DEBUG COMPOSITE] Using original style (original colors)")
+            # if HumanMatting.VERBOSE_DEBUG:
+            #     print("[DEBUG COMPOSITE] Using original style (original colors)")
         
         # Composite: foreground * alpha + background * (1 - alpha)
         result = (foreground * alpha + background * (1 - alpha)).astype(np.uint8)
-        print(f"[DEBUG COMPOSITE] Composite result shape: {result.shape}, dtype: {result.dtype}")
-        print(f"[DEBUG COMPOSITE] Result value range: [{result.min()}, {result.max()}]")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG COMPOSITE] Composite result shape: {result.shape}, dtype: {result.dtype}")
+        #     print(f"[DEBUG COMPOSITE] Result value range: [{result.min()}, {result.max()}]")
         
         return result
     
@@ -694,13 +742,15 @@ class HumanMatting:
         Returns:
             Tuple of (alpha_matte, composited_result)
         """
-        print(f"\n{'='*60}")
-        print(f"[DEBUG PROCESS] Starting matting process")
-        print(f"[DEBUG PROCESS] Frame shape: {frame.shape if frame is not None else None}")
-        print(f"[DEBUG PROCESS] Bbox: {bbox}")
-        print(f"[DEBUG PROCESS] Has landmarks: {landmarks is not None}")
-        print(f"[DEBUG PROCESS] Model type: {getattr(self, 'model_type', 'unknown')}")
-        print(f"{'='*60}")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"\n{'='*60}")
+        #     print(f"[DEBUG PROCESS] Starting matting process")
+        #     print(f"[DEBUG PROCESS] Frame shape: {frame.shape if frame is not None else None}")
+        #     print(f"[DEBUG PROCESS] Bbox: {bbox}")
+        #     print(f"[DEBUG PROCESS] Has landmarks: {landmarks is not None}")
+        #     print(f"[DEBUG PROCESS] Model type: {getattr(self, 'model_type', 'unknown')}")
+        #     print(f"{'='*60}")
         
         # Use landmarks if provided, otherwise try to get from stored data
         if landmarks is None and hasattr(self, '_last_person_data'):
@@ -711,16 +761,19 @@ class HumanMatting:
         alpha_matte = self.extract_matte_with_landmarks(frame, bbox, landmarks)
         
         if alpha_matte is None:
-            print("[DEBUG PROCESS] Alpha matte is None, cannot composite")
+            # 关键错误信息保留
+            print("[ERROR] Alpha matte is None, cannot composite")
             return None, None
         
         # Get style from config
         style = getattr(self.matting_config, 'style', 'original')
         composited = self.composite(frame, alpha_matte, background, style=style)
         
-        print(f"[DEBUG PROCESS] Process complete - alpha_matte: {alpha_matte.shape if alpha_matte is not None else None}, "
-              f"composited: {composited.shape if composited is not None else None}")
-        print(f"{'='*60}\n")
+        # 详细debug信息（已注释，需要时取消注释）
+        # if HumanMatting.VERBOSE_DEBUG:
+        #     print(f"[DEBUG PROCESS] Process complete - alpha_matte: {alpha_matte.shape if alpha_matte is not None else None}, "
+        #           f"composited: {composited.shape if composited is not None else None}")
+        #     print(f"{'='*60}\n")
         
         return alpha_matte, composited
     
@@ -729,4 +782,3 @@ class HumanMatting:
                                     landmarks: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
         """Extract matte with landmarks support."""
         return self.extract_matte(frame, bbox, landmarks)
-

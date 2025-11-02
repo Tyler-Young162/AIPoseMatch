@@ -248,7 +248,7 @@ def load_rvm_model(model_path: str, variant='mobilenetv3', device='cuda'):
         model.eval()
         
         if load_ratio < 0.5:  # Less than 50% of weights loaded
-            print(f"⚠ WARNING: Only {loaded_keys}/{total_keys} weights loaded ({load_ratio*100:.1f}%)")
+            print(f"[WARN] Only {loaded_keys}/{total_keys} weights loaded ({load_ratio*100:.1f}%)")
             print(f"   This means the model architecture doesn't match the checkpoint!")
             print(f"   The decoder layers are using RANDOM initialization, which explains")
             print(f"   why the output is nearly uniform (no useful matting).")
@@ -256,7 +256,7 @@ def load_rvm_model(model_path: str, variant='mobilenetv3', device='cuda'):
             print(f"   1. Use the official RVM implementation from GitHub")
             print(f"   2. Or use simplified matting (which is working)")
         else:
-            print(f"✓ RVM model loaded from {model_path} ({load_ratio*100:.1f}% weights matched)")
+            print(f"[OK] RVM model loaded from {model_path} ({load_ratio*100:.1f}% weights matched)")
         
         return model
         

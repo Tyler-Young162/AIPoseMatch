@@ -109,8 +109,8 @@ class AIPoseMatchRVMDebug:
         self.debug_flags = {
             'show_camera_full': False,
             'show_roi': True,
-            'show_pose_debug': True,
-            'show_matting_debug': True,
+            'show_pose_debug': False,  # 默认关闭，避免刷屏
+            'show_matting_debug': False,  # 默认关闭，避免刷屏
             'show_all': False,
             'show_fps': True,
             'show_hints': True,
@@ -443,9 +443,10 @@ class AIPoseMatchRVMDebug:
                     result['alpha_shape'] = alpha_matte.shape if alpha_matte is not None else None
                     result['processing_time'] = matting_time
         
-        # Print debug info
-        self._print_debug_info("pose", result)
-        self._print_debug_info("matting", result)
+        # Print debug info (已注释，避免刷屏)
+        # 需要调试时可以取消注释
+        # self._print_debug_info("pose", result)
+        # self._print_debug_info("matting", result)
         
         return result
     
@@ -473,118 +474,51 @@ class AIPoseMatchRVMDebug:
         y_min = int(roi_config.y_min * h)
         y_max = int(roi_config.y_max * h)
         
-        # 确定基础显示内容
-        if self.display_flags['show_roi_crop'] and roi_frame is not None:
-            # 模式2开启：显示ROI区域，无效区域为黑色
-            display = np.zeros((h, w, 3), dtype=np.uint8)
-            
-            # 调整ROI大小以匹配实际位置
-            target_h = y_max - y_min
-            target_w = x_max - x_min
-            
-            if roi_frame.shape[:2] != (target_h, target_w):
-                roi_resized = cv2.resize(roi_frame, (target_w, target_h))
-            else:
-                roi_resized = roi_frame.copy()
-            
-            # 放置ROI到对应位置
-            display[y_min:y_max, x_min:x_max] = roi_resized
-            
-            # 当前工作区域是ROI区域
-            working_area = display[y_min:y_max, x_min:x_max].copy()
-            working_h, working_w = working_area.shape[:2]
-        else:
-            # 模式2关闭：显示完整原始画面
-            display = original_frame.copy()
-            working_area = display.copy()
-            working_h, working_w = h, w
-            # 注意：x_min, y_min, x_max, y_max 仍保留用于坐标转换
+        # 计算ROI尺寸（始终只显示ROI区域，保持窗口大小一致）
+        target_roi_h = y_max - y_min
+        target_roi_w = x_max - x_min
         
-        # 应用抠像效果（模式4）
-        if self.display_flags['show_matting'] and matting_result is not None:
-            # matting_result已经是合成后的结果（人物原色+绿色背景）
-            # 它基于ROI frame，所以需要调整大小以匹配ROI区域
-            target_roi_h = y_max - y_min
-            target_roi_w = x_max - x_min
-            
-            if matting_result.shape[:2] != (target_roi_h, target_roi_w):
-                matting_resized = cv2.resize(matting_result, (target_roi_w, target_roi_h))
-            else:
-                matting_resized = matting_result.copy()
-            
-            if self.display_flags['show_roi_crop']:
-                # ROI模式下，直接替换ROI区域
-                display[y_min:y_max, x_min:x_max] = matting_resized
-            else:
-                # 完整画面模式下，将抠像效果叠加到ROI区域
-                # 创建alpha mask用于混合
-                if alpha_matte is not None:
-                    # 使用alpha matte进行混合
-                    alpha_resized = cv2.resize(alpha_matte, (target_roi_w, target_roi_h))
-                    if alpha_resized.ndim == 2:
-                        alpha_3ch = np.expand_dims(alpha_resized, axis=2)
-                        alpha_3ch = np.repeat(alpha_3ch, 3, axis=2) / 255.0
-                    else:
-                        alpha_3ch = alpha_resized / 255.0
-                    
-                    # 混合：原图 * (1-alpha) + 抠像 * alpha
-                    roi_original = display[y_min:y_max, x_min:x_max].astype(np.float32)
-                    matting_float = matting_resized.astype(np.float32)
-                    blended = (roi_original * (1 - alpha_3ch) + matting_float * alpha_3ch).astype(np.uint8)
-                    display[y_min:y_max, x_min:x_max] = blended
+        # 首先检查：如果没有检测到人物或没有matting结果，直接显示绿色背景（透明效果）
+        best_person = processed_data.get('best_person')
+        no_person_mode = (best_person is None or matting_result is None)
+        
+        if no_person_mode:
+            # 没有人物时，显示ROI区域的绿色背景（只显示有效区域，不包含两侧黑色）
+            display = np.zeros((target_roi_h, target_roi_w, 3), dtype=np.uint8)
+            display[:, :, 1] = 255  # 绿色通道 = 255
+        # 有人物时，应用正常处理流程
+        else:
+            # 应用抠像效果（模式4）
+            if self.display_flags['show_matting'] and matting_result is not None:
+                # matting_result已经是合成后的结果（人物原色+绿色背景）
+                # 它基于ROI frame，所以尺寸应该匹配ROI区域
+                if matting_result.shape[:2] != (target_roi_h, target_roi_w):
+                    display = cv2.resize(matting_result, (target_roi_w, target_roi_h))
                 else:
-                    # 没有alpha，直接替换
-                    display[y_min:y_max, x_min:x_max] = matting_resized
+                    display = matting_result.copy()
+            else:
+                # 如果没有启用抠像，显示ROI原图
+                if roi_frame is not None:
+                    if roi_frame.shape[:2] != (target_roi_h, target_roi_w):
+                        display = cv2.resize(roi_frame, (target_roi_w, target_roi_h))
+                    else:
+                        display = roi_frame.copy()
+                else:
+                    # 没有ROI，显示绿色背景
+                    display = np.zeros((target_roi_h, target_roi_w, 3), dtype=np.uint8)
+                    display[:, :, 1] = 255
         
         # 叠加骨骼信息（模式3）
-        # 如果同时开启了抠像和骨骼，在抠像基础上绘制骨骼，而不是替换
-        pose_frame = processed_data.get('pose_frame')
+        # display现在已经是ROI尺寸，直接在display上绘制骨骼
         if self.display_flags['show_skeleton'] and best_person is not None:
-            if self.display_flags['show_roi_crop']:
-                # ROI模式下，在现有的display基础上绘制骨骼（如果已经应用了抠像，会叠加在抠像上）
-                roi_section = display[y_min:y_max, x_min:x_max].copy()
-                target_pose = self.pose_matcher.get_current_target_pose()
-                if target_pose is not None:
-                    roi_with_skeleton = self.pose_matcher.draw_skeleton_with_matching(
-                        roi_section, best_person, target_pose
-                    )
-                else:
-                    roi_with_skeleton = self.pose_detector.draw_skeleton(roi_section, [best_person])
-                display[y_min:y_max, x_min:x_max] = roi_with_skeleton
+            # display已经是ROI尺寸，landmarks也是相对于ROI的（归一化坐标0-1），直接绘制即可
+            target_pose = self.pose_matcher.get_current_target_pose()
+            if target_pose is not None:
+                display = self.pose_matcher.draw_skeleton_with_matching(
+                    display, best_person, target_pose
+                )
             else:
-                # 完整画面模式：需要将landmarks从ROI坐标系转换到完整画面坐标系
-                # landmarks是归一化的，相对于ROI frame（0-1相对于ROI）
-                # 需要转换为相对于完整画面的归一化坐标
-                roi_w_ratio = (x_max - x_min) / w
-                roi_h_ratio = (y_max - y_min) / h
-                
-                # 创建转换后的person数据
-                converted_person = best_person.copy()
-                converted_landmarks = best_person['landmarks'].copy()
-                
-                # 转换每个landmark的坐标：从ROI归一化坐标 -> 完整画面归一化坐标
-                for i in range(len(converted_landmarks)):
-                    # 原坐标是相对于ROI的（0-1）
-                    roi_x = converted_landmarks[i][0]
-                    roi_y = converted_landmarks[i][1]
-                    
-                    # 转换为完整画面的归一化坐标
-                    full_x = (x_min / w) + (roi_x * roi_w_ratio)
-                    full_y = (y_min / h) + (roi_y * roi_h_ratio)
-                    
-                    converted_landmarks[i][0] = full_x
-                    converted_landmarks[i][1] = full_y
-                
-                converted_person['landmarks'] = converted_landmarks
-                
-                # 在完整画面上绘制骨骼（使用匹配颜色）
-                target_pose = self.pose_matcher.get_current_target_pose()
-                if target_pose is not None:
-                    display = self.pose_matcher.draw_skeleton_with_matching(
-                        display, converted_person, target_pose
-                    )
-                else:
-                    display = self.pose_detector.draw_skeleton(display, [converted_person])
+                display = self.pose_detector.draw_skeleton(display, [best_person])
         
         # 添加状态信息
         fps = self.visualizer.calculate_fps()
@@ -603,10 +537,18 @@ class AIPoseMatchRVMDebug:
             # 在右上角显示目标姿态图片预览
             pose_image = target_pose.get('image')
             if pose_image is not None:
-                # 计算预览区域大小（右上角）
-                preview_size = 180  # 预览图片大小（稍微小一点，避免遮挡）
-                preview_x = w - preview_size - 10
+                # 获取实际的display尺寸（可能是ROI尺寸或完整画面尺寸）
+                display_h, display_w = display.shape[:2]
+                
+                # 计算预览区域大小（右上角）- 使用display的实际尺寸
+                preview_size = min(180, int(display_w * 0.25))  # 预览图片大小（不超过窗口25%）
+                preview_x = display_w - preview_size - 10
                 preview_y = 10
+                
+                # 确保预览位置有效
+                if preview_x < 0:
+                    preview_x = 10
+                    preview_size = display_w - 20
                 
                 # 调整图片大小（保持宽高比）
                 pose_h, pose_w = pose_image.shape[:2]
@@ -620,48 +562,61 @@ class AIPoseMatchRVMDebug:
                     preview_h = preview_size
                     preview_w = int(preview_size * aspect_ratio)
                 
-                # 确保预览区域不超过屏幕
-                if preview_x + preview_w > w:
-                    preview_w = w - preview_x - 10
+                # 确保预览区域不超过实际display尺寸
+                if preview_x + preview_w > display_w:
+                    preview_w = max(10, display_w - preview_x - 10)
                     preview_h = int(preview_w / aspect_ratio)
-                if preview_y + preview_h > h:
-                    preview_h = h - preview_y - 80  # 留出空间显示文字
+                if preview_y + preview_h > display_h:
+                    preview_h = max(10, display_h - preview_y - 80)  # 留出空间显示文字
                     preview_w = int(preview_h * aspect_ratio)
                 
-                pose_resized = cv2.resize(pose_image, (preview_w, preview_h))
+                # 最终检查，确保预览尺寸有效
+                if preview_w <= 0 or preview_h <= 0:
+                    # 窗口太小，跳过预览图显示
+                    pose_image = None
                 
-                # 在预览图片位置添加半透明背景（避免完全覆盖）
-                overlay = display.copy()
-                cv2.rectangle(overlay, 
-                            (preview_x - 5, preview_y - 5),
-                            (preview_x + preview_w + 5, preview_y + preview_h + 35),
-                            (0, 0, 0), -1)
-                display = cv2.addWeighted(display, 0.3, overlay, 0.7, 0)
-                
-                # 在预览图片周围绘制白色边框
-                cv2.rectangle(display, 
-                            (preview_x - 2, preview_y - 2),
-                            (preview_x + preview_w + 2, preview_y + preview_h + 2),
-                            (255, 255, 255), 2)
-                
-                # 放置预览图片
-                display[preview_y:preview_y + preview_h, 
-                       preview_x:preview_x + preview_w] = pose_resized
-                
-                # 在预览图片下方显示名称和评分
-                pose_name = target_pose['name']
-                text_y = preview_y + preview_h + 20
-                display = self._put_chinese_text(display, f"目标: {pose_name}", 
-                                                (preview_x, text_y),
-                                                font_size=14, color=(255, 255, 255))
-                
-                # 显示匹配评分（如果检测到人物）
-                if best_person is not None:
-                    score = processed_data.get('match_score', self.current_match_score)
-                    score_text = f"匹配度: {score:.1f}分"
-                    display = self._put_chinese_text(display, score_text, 
-                                                    (preview_x, text_y + 20),
-                                                    font_size=16, color=(0, 255, 255))
+                if pose_image is not None and preview_w > 0 and preview_h > 0 and \
+                   preview_x >= 0 and preview_y >= 0 and \
+                   preview_x + preview_w <= display_w and \
+                   preview_y + preview_h <= display_h:
+                    pose_resized = cv2.resize(pose_image, (preview_w, preview_h))
+                    
+                    # 在预览图片位置添加半透明背景（避免完全覆盖）
+                    overlay = display.copy()
+                    cv2.rectangle(overlay, 
+                                (max(0, preview_x - 5), max(0, preview_y - 5)),
+                                (min(preview_x + preview_w + 5, display_w - 1), 
+                                 min(preview_y + preview_h + 35, display_h - 1)),
+                                (0, 0, 0), -1)
+                    display = cv2.addWeighted(display, 0.3, overlay, 0.7, 0)
+                    
+                    # 在预览图片周围绘制白色边框
+                    cv2.rectangle(display, 
+                                (max(0, preview_x - 2), max(0, preview_y - 2)),
+                                (min(preview_x + preview_w + 2, display_w - 1), 
+                                 min(preview_y + preview_h + 2, display_h - 1)),
+                                (255, 255, 255), 2)
+                    
+                    # 放置预览图片
+                    display[preview_y:preview_y + preview_h, 
+                           preview_x:preview_x + preview_w] = pose_resized
+                    
+                    # 在预览图片下方显示名称和评分
+                    pose_name = target_pose['name']
+                    text_y = preview_y + preview_h + 20
+                    # 确保文字位置在有效范围内
+                    if text_y < display_h:
+                        display = self._put_chinese_text(display, f"目标: {pose_name}", 
+                                                        (max(0, preview_x), text_y),
+                                                        font_size=14, color=(255, 255, 255))
+                        
+                        # 显示匹配评分（如果检测到人物）
+                        if best_person is not None and text_y + 20 < display_h:
+                            score = processed_data.get('match_score', self.current_match_score)
+                            score_text = f"匹配度: {score:.1f}分"
+                            display = self._put_chinese_text(display, score_text, 
+                                                            (max(0, preview_x), text_y + 20),
+                                                            font_size=16, color=(0, 255, 255))
         
         # 添加模式指示（左下角）
         mode_text = []

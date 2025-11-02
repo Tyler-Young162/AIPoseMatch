@@ -30,12 +30,12 @@ try:
         
         MattingNetwork = OfficialMattingNetwork
         OFFICIAL_RVM_AVAILABLE = True
-        print("[RVM Official] ✓ Official RVM MattingNetwork imported successfully")
+        print("[RVM Official] OK: Official RVM MattingNetwork imported successfully")
         
         # Try to import helper functions (optional)
         try:
             from inference_utils import convert_video, convert_image
-            print("[RVM Official] ✓ Inference utilities imported")
+            print("[RVM Official] OK: Inference utilities imported")
         except ImportError:
             print("[RVM Official] Inference utilities not available (not critical)")
             
@@ -106,7 +106,7 @@ def load_official_rvm_model(model_path: str, variant='mobilenetv3', device='cuda
         print(f"[RVM Official] Weight loading: {loaded_keys}/{total_keys} ({load_ratio*100:.1f}%)")
         
         if load_ratio < 0.95:  # Less than 95% loaded is concerning
-            print(f"[RVM Official] ⚠ Warning: Some weights not loaded ({len(missing_keys)} missing)")
+            print(f"[RVM Official] WARN: Some weights not loaded ({len(missing_keys)} missing)")
             if missing_keys:
                 print(f"[RVM Official] Missing keys: {list(missing_keys)[:5]}")
         
@@ -114,7 +114,7 @@ def load_official_rvm_model(model_path: str, variant='mobilenetv3', device='cuda
         model = model.to(device)
         model.eval()
         
-        print(f"[RVM Official] ✓ Official RVM model loaded successfully!")
+        print(f"[RVM Official] OK: Official RVM model loaded successfully!")
         
         return model, None  # Return model and converter (converter handled separately)
         

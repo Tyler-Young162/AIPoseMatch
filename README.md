@@ -56,9 +56,25 @@ python test_dependencies.py
 ### 4. 运行程序
 
 **方式1：系统托盘模式（推荐）** ⭐新增
+
+使用虚拟环境运行（推荐）:
 ```bash
+# 激活虚拟环境
+.venv\Scripts\activate
+
+# 运行托盘
 python run_with_tray.py
 ```
+
+或使用一键启动脚本:
+```powershell
+# PowerShell
+.\start_tray.ps1
+
+# CMD
+start_tray.bat
+```
+
 - 程序启动后只显示系统托盘图标
 - 双击图标打开预览窗口
 - 右键菜单选择单摄像头或双摄像头模式

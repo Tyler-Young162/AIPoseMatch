@@ -59,3 +59,8 @@ debug_frame_*.jpg
 *.log
 logs/
 
+# Unity
+unity/
+*.unity
+*.meta
+

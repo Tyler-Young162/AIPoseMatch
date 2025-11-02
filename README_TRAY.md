@@ -6,11 +6,41 @@
 
 ## 启动方式
 
-### 默认启动（托盘模式）
+### 方式1：使用虚拟环境（推荐）⭐
 
 ```bash
+# 激活虚拟环境
+.venv\Scripts\activate
+
+# 运行托盘模式
 python run_with_tray.py
 ```
+
+或者使用一键启动脚本：
+
+**Windows PowerShell:**
+```powershell
+.\start_tray.ps1
+```
+
+**Windows CMD:**
+```cmd
+start_tray.bat
+```
+
+### 方式2：直接运行（需要先安装依赖）
+
+如果未使用虚拟环境，需要先安装依赖：
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 然后运行
+python run_with_tray.py
+```
+
+### 默认启动（托盘模式）
 
 启动后：
 - ✅ 只显示系统托盘图标，不打开预览窗口
