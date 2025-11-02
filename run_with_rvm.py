@@ -817,7 +817,20 @@ def main():
                        help='配置文件路径 (默认: config.yaml)')
     parser.add_argument('--rvm', action='store_true',
                        help='强制使用RVM模式')
+    parser.add_argument('--dual', action='store_true',
+                       help='启动双摄像头模式（需要运行 run_dual_camera.py）')
     args = parser.parse_args()
+    
+    # 如果指定双摄像头模式，提示用户使用正确的脚本
+    if args.dual:
+        print("=" * 70)
+        print("检测到 --dual 参数")
+        print("请使用以下命令启动双摄像头模式：")
+        print("  python run_dual_camera.py")
+        print("或使用系统托盘版本：")
+        print("  python run_with_tray.py --dual")
+        print("=" * 70)
+        return
     
     # Check if RVM models exist
     if args.rvm:

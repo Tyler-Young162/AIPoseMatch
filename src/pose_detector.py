@@ -221,6 +221,13 @@ class PoseDetector:
     
     def cleanup(self):
         """Release pose detector resources."""
-        if hasattr(self, 'pose'):
-            self.pose.close()
+        if hasattr(self, 'pose') and self.pose is not None:
+            try:
+                self.pose.close()
+            except (ValueError, Exception) as e:
+                # MediaPipe可能会在已经关闭时抛出异常，忽略即可
+                # ValueError: 'Closing SolutionBase._graph which is already None'
+                pass
+            finally:
+                self.pose = None
 

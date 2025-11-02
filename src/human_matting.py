@@ -207,9 +207,23 @@ class HumanMatting:
     
     def cleanup(self):
         """Release matting model resources."""
-        if self.model is not None and isinstance(self.model, torch.nn.Module):
-            del self.model
-        self.is_initialized = False
+        try:
+            # 检查model属性是否存在
+            if hasattr(self, 'model') and self.model is not None:
+                # 只有当model是torch模块时才需要删除
+                if isinstance(self.model, torch.nn.Module):
+                    del self.model
+                    self.model = None
+                # 如果是字符串（如"simple"），直接设置为None
+                elif isinstance(self.model, str):
+                    self.model = None
+        except Exception as e:
+            # 忽略清理错误，避免影响程序退出
+            pass
+        
+        # 安全设置is_initialized标志
+        if hasattr(self, 'is_initialized'):
+            self.is_initialized = False
     
     def simple_matting(self, frame: np.ndarray, bbox: Optional[tuple] = None, 
                       landmarks: Optional[np.ndarray] = None) -> np.ndarray:
@@ -599,7 +613,8 @@ class HumanMatting:
             return self.simple_matting(frame)
     
     def composite(self, frame: np.ndarray, alpha_matte: np.ndarray,
-                  background: Optional[np.ndarray] = None) -> np.ndarray:
+                  background: Optional[np.ndarray] = None,
+                  style: str = "original") -> np.ndarray:
         """
         Composite frame with alpha matte onto background.
         
@@ -646,8 +661,18 @@ class HumanMatting:
         alpha = np.repeat(alpha, 3, axis=2)
         print(f"[DEBUG COMPOSITE] Alpha expanded shape: {alpha.shape}")
         
-        # Composite
-        result = (frame * alpha + background * (1 - alpha)).astype(np.uint8)
+        # Apply style
+        if style.lower() == "silhouette":
+            # 剪影风格：人物区域为纯黑色
+            foreground = np.zeros_like(frame)  # 纯黑色
+            print("[DEBUG COMPOSITE] Using silhouette style (black foreground)")
+        else:
+            # 原图风格：人物保持原色
+            foreground = frame
+            print("[DEBUG COMPOSITE] Using original style (original colors)")
+        
+        # Composite: foreground * alpha + background * (1 - alpha)
+        result = (foreground * alpha + background * (1 - alpha)).astype(np.uint8)
         print(f"[DEBUG COMPOSITE] Composite result shape: {result.shape}, dtype: {result.dtype}")
         print(f"[DEBUG COMPOSITE] Result value range: [{result.min()}, {result.max()}]")
         
@@ -689,7 +714,9 @@ class HumanMatting:
             print("[DEBUG PROCESS] Alpha matte is None, cannot composite")
             return None, None
         
-        composited = self.composite(frame, alpha_matte, background)
+        # Get style from config
+        style = getattr(self.matting_config, 'style', 'original')
+        composited = self.composite(frame, alpha_matte, background, style=style)
         
         print(f"[DEBUG PROCESS] Process complete - alpha_matte: {alpha_matte.shape if alpha_matte is not None else None}, "
               f"composited: {composited.shape if composited is not None else None}")

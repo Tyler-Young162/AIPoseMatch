@@ -49,6 +49,7 @@ class MattingConfig:
     downsample_ratio: float = 0.25
     filter_incomplete: bool = True
     min_person_height_ratio: float = 0.3
+    style: str = "silhouette"  # "original" (原图输出) or "silhouette" (剪影风格)
 
 
 @dataclass
@@ -151,7 +152,8 @@ class Config:
                 'device': config.matting.device,
                 'downsample_ratio': config.matting.downsample_ratio,
                 'filter_incomplete': config.matting.filter_incomplete,
-                'min_person_height_ratio': config.matting.min_person_height_ratio
+                'min_person_height_ratio': config.matting.min_person_height_ratio,
+                'style': config.matting.style
             },
             'display': {
                 'window_width': config.display.window_width,

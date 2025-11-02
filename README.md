@@ -55,21 +55,35 @@ python test_dependencies.py
 
 ### 4. 运行程序
 
-**一键启动（推荐）**：
+**方式1：系统托盘模式（推荐）** ⭐新增
 ```bash
-# Windows
-start_rvm.bat 或 start_rvm.ps1
+python run_with_tray.py
+```
+- 程序启动后只显示系统托盘图标
+- 双击图标打开预览窗口
+- 右键菜单选择单摄像头或双摄像头模式
 
-# 或命令行
+**方式2：直接启动单摄像头模式**
+```bash
 python run_with_rvm.py
 ```
 
-**原版启动**：
+**方式3：双摄像头比赛模式** ⭐新增
+```bash
+python run_dual_camera.py
+```
+- 同时打开摄像头0和摄像头1
+- 两个窗口共享同一目标姿态进行比赛
+- 详细说明见 [README_DUAL_CAMERA.md](README_DUAL_CAMERA.md)
+
+**方式4：原版启动**
 ```bash
 python src/main.py
 ```
 
-💡 **提示**：RVM增强版（`run_with_rvm.py`）提供完整的调试信息和键盘控制功能，更适合开发和调试。
+💡 **提示**：
+- 系统托盘模式适合后台运行，不占用屏幕空间
+- 双摄像头模式适合比赛场景，可以同时比较两个人的姿态
 
 详细使用说明请参考：
 - [RUN_RVM_README.md](RUN_RVM_README.md) - RVM增强版使用指南

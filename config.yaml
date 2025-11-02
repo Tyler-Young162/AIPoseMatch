@@ -26,6 +26,7 @@ matting:
   downsample_ratio: 0.25
   filter_incomplete: false  # Temporarily disabled to debug RVM output
   min_person_height_ratio: 0.3
+  style: "silhouette"  # Options: "original" (原图), "silhouette" (剪影风格，默认)
 
 display:
   window_width: 1920
