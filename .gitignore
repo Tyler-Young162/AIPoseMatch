@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 develop-eggs/
@@ -48,6 +49,7 @@ desktop.ini
 # Output
 output_*.jpg
 output_*.png
+debug_frame_*.jpg
 *.mp4
 
 # Config (optional - uncomment if you want to ignore local config)

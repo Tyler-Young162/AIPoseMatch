@@ -18,6 +18,7 @@ from pose_detector import PoseDetector
 from person_selector import PersonSelector
 from human_matting import HumanMatting
 from visualizer import Visualizer
+from pose_matcher import PoseMatcher
 
 
 class AIPoseMatchRVMDebug:
@@ -84,9 +85,16 @@ class AIPoseMatchRVMDebug:
         else:
             print("[WARN] 抠像模块初始化失败，使用简化方案")
         
-        print("\n[7/7] 初始化可视化模块...")
+        print("\n[7/8] 初始化可视化模块...")
         self.visualizer = Visualizer(self.config)
         print("[OK] 可视化模块初始化成功")
+        
+        print("\n[8/8] 初始化姿态比对模块...")
+        self.pose_matcher = PoseMatcher(pose_folder="Pose")
+        if len(self.pose_matcher.target_poses) > 0:
+            print(f"[OK] 姿态比对模块初始化成功，已加载 {len(self.pose_matcher.target_poses)} 个目标姿态")
+        else:
+            print("[WARN] 姿态比对模块初始化成功，但未找到目标姿态图片")
         
         # Display mode flags - 默认234都开启
         self.display_flags = {
@@ -121,6 +129,9 @@ class AIPoseMatchRVMDebug:
             'fps_history': []
         }
         
+        # Pose matching score
+        self.current_match_score = 0.0
+        
         print("\n" + "=" * 70)
         print("初始化完成！")
         print("=" * 70)
@@ -141,6 +152,8 @@ class AIPoseMatchRVMDebug:
         print("C / c      - 切换摄像头")
         print("F / f      - 切换FPS显示")
         print("H / h      - 切换提示信息显示")
+        print("← / →     - 切换目标姿态（左右箭头键）")
+        print("A / D      - 切换目标姿态（左/右，备用方案）")
         print("S / s      - 保存当前帧到文件")
         print("R / r      - 重置统计信息")
         print("Q / q      - 退出程序")
@@ -389,10 +402,29 @@ class AIPoseMatchRVMDebug:
                 best_person = self.person_selector.select_best_person(all_persons, roi_center)
                 result['best_person'] = best_person
                 
-                # Always prepare pose frame for potential display
+                # Always prepare pose frame for potential display with matching
                 if best_person:
-                    roi_with_pose = self.pose_detector.draw_skeleton(roi_frame.copy(), [best_person])
+                    # Use pose matcher to draw skeleton with color coding
+                    target_pose = self.pose_matcher.get_current_target_pose()
+                    if target_pose is not None:
+                        # Calculate matching score
+                        score, _ = self.pose_matcher.calculate_pose_similarity(
+                            best_person['landmarks'], target_pose['landmarks']
+                        )
+                        self.current_match_score = score
+                        result['match_score'] = score
+                        
+                        # Draw skeleton with color-coded matching
+                        roi_with_pose = self.pose_matcher.draw_skeleton_with_matching(
+                            roi_frame.copy(), best_person, target_pose
+                        )
+                    else:
+                        # No target pose, use default skeleton drawing
+                        roi_with_pose = self.pose_detector.draw_skeleton(roi_frame.copy(), [best_person])
+                        self.current_match_score = 0.0
                     result['pose_frame'] = roi_with_pose
+                else:
+                    self.current_match_score = 0.0
                 
                 # Matting
                 if best_person:
@@ -505,11 +537,19 @@ class AIPoseMatchRVMDebug:
                     display[y_min:y_max, x_min:x_max] = matting_resized
         
         # 叠加骨骼信息（模式3）
+        # 如果同时开启了抠像和骨骼，在抠像基础上绘制骨骼，而不是替换
+        pose_frame = processed_data.get('pose_frame')
         if self.display_flags['show_skeleton'] and best_person is not None:
             if self.display_flags['show_roi_crop']:
-                # ROI模式下，在ROI区域内绘制骨骼（landmarks已经是相对于ROI的）
+                # ROI模式下，在现有的display基础上绘制骨骼（如果已经应用了抠像，会叠加在抠像上）
                 roi_section = display[y_min:y_max, x_min:x_max].copy()
-                roi_with_skeleton = self.pose_detector.draw_skeleton(roi_section, [best_person])
+                target_pose = self.pose_matcher.get_current_target_pose()
+                if target_pose is not None:
+                    roi_with_skeleton = self.pose_matcher.draw_skeleton_with_matching(
+                        roi_section, best_person, target_pose
+                    )
+                else:
+                    roi_with_skeleton = self.pose_detector.draw_skeleton(roi_section, [best_person])
                 display[y_min:y_max, x_min:x_max] = roi_with_skeleton
             else:
                 # 完整画面模式：需要将landmarks从ROI坐标系转换到完整画面坐标系
@@ -537,8 +577,14 @@ class AIPoseMatchRVMDebug:
                 
                 converted_person['landmarks'] = converted_landmarks
                 
-                # 在完整画面上绘制骨骼
-                display = self.pose_detector.draw_skeleton(display, [converted_person])
+                # 在完整画面上绘制骨骼（使用匹配颜色）
+                target_pose = self.pose_matcher.get_current_target_pose()
+                if target_pose is not None:
+                    display = self.pose_matcher.draw_skeleton_with_matching(
+                        display, converted_person, target_pose
+                    )
+                else:
+                    display = self.pose_detector.draw_skeleton(display, [converted_person])
         
         # 添加状态信息
         fps = self.visualizer.calculate_fps()
@@ -551,6 +597,72 @@ class AIPoseMatchRVMDebug:
             len(processed_data.get('persons', []))
         )
         
+        # 添加匹配评分和目标姿态信息
+        target_pose = self.pose_matcher.get_current_target_pose()
+        if target_pose is not None:
+            # 在右上角显示目标姿态图片预览
+            pose_image = target_pose.get('image')
+            if pose_image is not None:
+                # 计算预览区域大小（右上角）
+                preview_size = 180  # 预览图片大小（稍微小一点，避免遮挡）
+                preview_x = w - preview_size - 10
+                preview_y = 10
+                
+                # 调整图片大小（保持宽高比）
+                pose_h, pose_w = pose_image.shape[:2]
+                aspect_ratio = pose_w / pose_h
+                if aspect_ratio > 1:
+                    # 横向图片
+                    preview_w = preview_size
+                    preview_h = int(preview_size / aspect_ratio)
+                else:
+                    # 竖向图片
+                    preview_h = preview_size
+                    preview_w = int(preview_size * aspect_ratio)
+                
+                # 确保预览区域不超过屏幕
+                if preview_x + preview_w > w:
+                    preview_w = w - preview_x - 10
+                    preview_h = int(preview_w / aspect_ratio)
+                if preview_y + preview_h > h:
+                    preview_h = h - preview_y - 80  # 留出空间显示文字
+                    preview_w = int(preview_h * aspect_ratio)
+                
+                pose_resized = cv2.resize(pose_image, (preview_w, preview_h))
+                
+                # 在预览图片位置添加半透明背景（避免完全覆盖）
+                overlay = display.copy()
+                cv2.rectangle(overlay, 
+                            (preview_x - 5, preview_y - 5),
+                            (preview_x + preview_w + 5, preview_y + preview_h + 35),
+                            (0, 0, 0), -1)
+                display = cv2.addWeighted(display, 0.3, overlay, 0.7, 0)
+                
+                # 在预览图片周围绘制白色边框
+                cv2.rectangle(display, 
+                            (preview_x - 2, preview_y - 2),
+                            (preview_x + preview_w + 2, preview_y + preview_h + 2),
+                            (255, 255, 255), 2)
+                
+                # 放置预览图片
+                display[preview_y:preview_y + preview_h, 
+                       preview_x:preview_x + preview_w] = pose_resized
+                
+                # 在预览图片下方显示名称和评分
+                pose_name = target_pose['name']
+                text_y = preview_y + preview_h + 20
+                display = self._put_chinese_text(display, f"目标: {pose_name}", 
+                                                (preview_x, text_y),
+                                                font_size=14, color=(255, 255, 255))
+                
+                # 显示匹配评分（如果检测到人物）
+                if best_person is not None:
+                    score = processed_data.get('match_score', self.current_match_score)
+                    score_text = f"匹配度: {score:.1f}分"
+                    display = self._put_chinese_text(display, score_text, 
+                                                    (preview_x, text_y + 20),
+                                                    font_size=16, color=(0, 255, 255))
+        
         # 添加模式指示（左下角）
         mode_text = []
         if self.display_flags['show_roi_crop']:
@@ -561,8 +673,8 @@ class AIPoseMatchRVMDebug:
             mode_text.append("抠像")
         
         mode_str = " | ".join(mode_text) if mode_text else "无"
-        cv2.putText(display, f"模式: {mode_str}", (10, h - 20),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        display = self._put_chinese_text(display, f"模式: {mode_str}", (10, h - 20),
+                                        font_size=18, color=(255, 255, 255))
         
         return display
     
@@ -589,49 +701,65 @@ class AIPoseMatchRVMDebug:
                 self._update_stats()
                 
                 # Handle keyboard input
-                key = cv2.waitKey(1) & 0xFF
+                key = cv2.waitKey(1)
                 
-                # Check for exit (only user-initiated)
-                if key == ord('q') or key == ord('Q') or key == 27:  # ESC key also exits
+                # Handle arrow keys - OpenCV arrow key handling
+                # Arrow keys on Windows may return 0xFF followed by specific codes
+                key_code = key & 0xFF
+                if key == -1:
+                    pass  # No key pressed
+                elif key_code == 0xFF:  # Extended key
+                    # Check the second byte (upper 8 bits)
+                    extended_code = (key >> 8) & 0xFF
+                    if extended_code == 37:  # Left arrow
+                        self.pose_matcher.switch_to_previous_pose()
+                    elif extended_code == 39:  # Right arrow
+                        self.pose_matcher.switch_to_next_pose()
+                elif key_code == ord('a') or key_code == ord('A'):  # Alternative: A key for previous
+                    self.pose_matcher.switch_to_previous_pose()
+                elif key_code == ord('d') or key_code == ord('D'):  # Alternative: D key for next
+                    self.pose_matcher.switch_to_next_pose()
+                elif key_code == ord('q') or key_code == ord('Q') or key == 27:  # ESC key also exits
                     print("\n用户退出请求")
                     break
                 
-                # Handle other key presses
-                if key == ord('1'):
+                # Handle other key presses (mask to get ASCII)
+                key_ascii = key_code
+                if key_ascii == ord('1'):
                     self.debug_flags['show_camera_full'] = not self.debug_flags['show_camera_full']
                     print(f"完整摄像头画面: {'开启' if self.debug_flags['show_camera_full'] else '关闭'}")
                 
-                elif key == ord('2'):
+                elif key_ascii == ord('2'):
                     self.display_flags['show_roi_crop'] = not self.display_flags['show_roi_crop']
                     self.debug_flags['show_roi'] = self.display_flags['show_roi_crop']
                     print(f"ROI裁剪显示 (2): {'开启' if self.display_flags['show_roi_crop'] else '关闭'}")
                 
-                elif key == ord('3'):
+                elif key_ascii == ord('3'):
                     self.display_flags['show_skeleton'] = not self.display_flags['show_skeleton']
                     self.debug_flags['show_pose_debug'] = self.display_flags['show_skeleton']
                     print(f"骨骼显示 (3): {'开启' if self.display_flags['show_skeleton'] else '关闭'}")
                 
-                elif key == ord('4'):
+                elif key_ascii == ord('4'):
                     self.display_flags['show_matting'] = not self.display_flags['show_matting']
                     self.debug_flags['show_matting_debug'] = self.display_flags['show_matting']
                     print(f"抠像效果 (4): {'开启' if self.display_flags['show_matting'] else '关闭'}")
                 
-                elif key == ord('5'):
+                elif key_ascii == ord('5'):
                     self.debug_flags['show_all'] = not self.debug_flags['show_all']
                     print(f"所有调试信息: {'开启' if self.debug_flags['show_all'] else '关闭'}")
                 
-                elif key == ord('f') or key == ord('F'):
+                elif key_ascii == ord('f') or key_ascii == ord('F'):
                     self.debug_flags['show_fps'] = not self.debug_flags['show_fps']
                     print(f"FPS显示: {'开启' if self.debug_flags['show_fps'] else '关闭'}")
                 
-                elif key == ord('h') or key == ord('H'):
+                elif key_ascii == ord('h') or key_ascii == ord('H'):
                     self.debug_flags['show_hints'] = not self.debug_flags['show_hints']
                     print(f"提示信息显示: {'开启' if self.debug_flags['show_hints'] else '关闭'}")
                 
-                elif key == ord('c') or key == ord('C'):
+                elif key_ascii == ord('c') or key_ascii == ord('C'):
                     self._switch_camera()
                 
-                elif key == ord('s') or key == ord('S'):
+                elif key_ascii == ord('s') or key_ascii == ord('S'):
                     output_path = f"debug_frame_{self.stats['frame_count']:05d}.jpg"
                     if combined_display is not None:
                         cv2.imwrite(output_path, combined_display)
@@ -641,7 +769,7 @@ class AIPoseMatchRVMDebug:
                             cv2.imwrite(output_path, processed_data['roi'])
                     print(f"已保存帧到: {output_path}")
                 
-                elif key == ord('r') or key == ord('R'):
+                elif key_ascii == ord('r') or key_ascii == ord('R'):
                     self.stats = {
                         'frame_count': 0,
                         'detection_count': 0,
@@ -663,6 +791,8 @@ class AIPoseMatchRVMDebug:
         self.camera.release()
         self.pose_detector.cleanup()
         self.matting.cleanup()
+        if hasattr(self, 'pose_matcher'):
+            self.pose_matcher.cleanup()
         cv2.destroyAllWindows()
         
         print("\n" + "=" * 70)
